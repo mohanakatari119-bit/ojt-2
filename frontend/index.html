@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API Monitor</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    body { display: block; }
+  </style>
+</head>
+<body>
+
+<div class="onboard-wrap">
+
+  <!-- Left: branding -->
+  <div class="onboard-left">
+    <div>
+      <div class="brand">
+        <div class="brand-name">API Monitor</div>
+        <div class="brand-tag">v1.0 — self-hosted</div>
+      </div>
+
+      <h1>Capture, inspect,<br>debug your APIs.</h1>
+      <p class="subtitle">
+        Drop-in request logging with structured storage, real-time metrics,
+        replay, and alert rules. No third-party service required.
+      </p>
+
+      <ul class="feature-list">
+        <li><span class="dot"></span>Structured request and response logging with full header and body capture</li>
+        <li><span class="dot"></span>Replay any captured request against any target URL with custom overrides</li>
+        <li><span class="dot"></span>Alert rules that fire on status code, latency, or error conditions</li>
+        <li><span class="dot"></span>Aggregate metrics — error rate, latency percentiles, top paths</li>
+        <li><span class="dot"></span>API key auth with per-service isolation</li>
+      </ul>
+    </div>
+
+    <div class="footer-note">
+      Ingest endpoint: <span style="font-family: var(--mono); color: var(--text);">POST /v1/logs</span>
+      &mdash; authenticated via Bearer token.
+    </div>
+  </div>
+
+  <!-- Right: forms -->
+  <div class="onboard-right">
+    <div class="onboard-form-wrap">
+
+      <!-- Step 1: choose action -->
+      <div id="step-choose">
+        <div class="step-header">
+          <h2>Get started</h2>
+          <p>Create a new workspace or sign in with an existing API key.</p>
+        </div>
+
+        <div class="tab-row">
+          <button class="tab-btn active" onclick="switchTab('create')">New workspace</button>
+          <button class="tab-btn" onclick="switchTab('signin')">Sign in</button>
+        </div>
+
+        <!-- Create workspace tab -->
+        <div class="tab-panel active" id="tab-create">
+          <div id="create-notice"></div>
+
+          <div class="field">
+            <label>Service name</label>
+            <input id="svc-name" type="text" placeholder="my-backend" autocomplete="off" />
+          </div>
+
+          <div class="field">
+            <label>Base URL <span style="color:var(--muted); text-transform:none; letter-spacing:0;">(optional)</span></label>
+            <input id="svc-url" type="text" placeholder="https://api.example.com" />
+          </div>
+
+          <div class="field">
+            <label>API key name</label>
+            <input id="key-name" type="text" value="default" placeholder="default" />
+          </div>
+
+          <button class="btn btn-primary w-full" onclick="createWorkspace()" id="create-btn"
+            style="justify-content:center; margin-top:8px;">
+            Create workspace
+          </button>
+        </div>
+
+        <!-- Sign in tab -->
+        <div class="tab-panel" id="tab-signin">
+          <div id="signin-notice"></div>
+          <div class="field">
+            <label>API key</label>
+            <input id="existing-key" type="text" placeholder="mkey_..." autocomplete="off" />
+          </div>
+          <p style="font-size:12px; color:var(--muted); margin-bottom:16px;">
+            Your API key was shown once when the workspace was created.
+            You can generate a new key from the services endpoint if needed.
+          </p>
+          <button class="btn btn-secondary w-full" onclick="signIn()"
+            style="justify-content:center;">
+            Continue to dashboard
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 2: key reveal -->
+      <div id="step-key" style="display:none;">
+        <div class="step-header">
+          <h2>Workspace created</h2>
+          <p>Your API key is shown once. Copy it before continuing.</p>
+        </div>
+
+        <div class="key-display" id="raw-key-display"></div>
+
+        <div style="display:flex; gap:8px; margin-bottom:24px;">
+          <button class="btn btn-secondary" onclick="copyKey()" id="copy-btn">Copy key</button>
+          <button class="btn btn-primary" onclick="continueToApp()" style="flex:1; justify-content:center;">
+            Continue to dashboard
+          </button>
+        </div>
+
+        <div style="background:var(--surface2); border:1px solid var(--border); border-radius:var(--radius); padding:14px 16px;">
+          <div style="font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-bottom:10px;">Quick start</div>
+          <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">Send a log via curl:</div>
+          <pre id="curl-example" style="max-height:none; font-size:11px; padding:10px 12px;"></pre>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script src="/static/js/app.js"></script>
+<script>
+  if (getApiKey()) window.location.href = '/dashboard';
+
+  let createdRawKey = '';
+
+  function switchTab(tab) {
+    document.querySelectorAll('.tab-btn').forEach((b, i) => {
+      b.classList.toggle('active', (i === 0) === (tab === 'create'));
+    });
+    document.getElementById('tab-create').classList.toggle('active', tab === 'create');
+    document.getElementById('tab-signin').classList.toggle('active', tab === 'signin');
+  }
+
+  async function createWorkspace() {
+    const name    = document.getElementById('svc-name').value.trim();
+    const url     = document.getElementById('svc-url').value.trim();
+    const keyName = document.getElementById('key-name').value.trim() || 'default';
+    const notice  = document.getElementById('create-notice');
+    const btn     = document.getElementById('create-btn');
+
+    if (!name) { showNotice(notice, 'Service name is required.'); return; }
+
+    btn.disabled = true;
+    btn.textContent = 'Creating...';
+
+    try {
+      const svc = await apiFetch('/v1/services', {
+        method: 'POST',
+        body: JSON.stringify({ name, base_url: url || null }),
+      });
+
+      const keyData = await apiFetch(`/v1/services/${svc.id}/keys`, {
+        method: 'POST',
+        body: JSON.stringify({ name: keyName, service_id: svc.id }),
+      });
+
+      createdRawKey = keyData.raw_key;
+      document.getElementById('raw-key-display').textContent = createdRawKey;
+      document.getElementById('curl-example').textContent =
+`curl -X POST http://localhost:8090/v1/logs \\
+  -H "Authorization: Bearer ${createdRawKey}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"method":"GET","url":"https://api.example.com/users","path":"/users","status_code":200,"latency_ms":42}'`;
+
+      document.getElementById('step-choose').style.display = 'none';
+      document.getElementById('step-key').style.display = '';
+    } catch (e) {
+      showNotice(notice, e.message);
+      btn.disabled = false;
+      btn.textContent = 'Create workspace';
+    }
+  }
+
+  function copyKey() {
+    navigator.clipboard.writeText(createdRawKey).then(() => {
+      const btn = document.getElementById('copy-btn');
+      btn.textContent = 'Copied';
+      setTimeout(() => btn.textContent = 'Copy key', 2000);
+    });
+  }
+
+  function continueToApp() {
+    setApiKey(createdRawKey);
+    window.location.href = '/dashboard';
+  }
+
+  function signIn() {
+    const k = document.getElementById('existing-key').value.trim();
+    if (!k) { showNotice(document.getElementById('signin-notice'), 'Enter your API key.'); return; }
+    setApiKey(k);
+    window.location.href = '/dashboard';
+  }
+
+  // Allow Enter key to submit
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    const activeTab = document.querySelector('.tab-panel.active');
+    if (activeTab?.id === 'tab-create') createWorkspace();
+    if (activeTab?.id === 'tab-signin') signIn();
+  });
+</script>
+</body>
+</html>
