@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Replay — API Monitor</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<div id="sidebar-root"></div>
+
+<div class="main">
+  <div class="topbar">
+    <span class="topbar-title">Replay</span>
+    <a id="detail-back" href="#" class="btn btn-sm btn-secondary">Inspect Log</a>
+  </div>
+
+  <div class="content">
+    <div id="notice"></div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:24px;">
+      <!-- Left: Original + overrides -->
+      <div>
+        <div class="card mb-16">
+          <div class="card-title">Original Request</div>
+          <div id="orig-info" style="color:var(--muted);">Loading</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Overrides (optional)</div>
+          <label style="display:block; margin-bottom:4px; font-size:12px; color:var(--muted);">Override URL</label>
+          <input id="ov-url" type="text" placeholder="Leave blank to use original" style="width:100%; margin-bottom:12px;" />
+          <label style="display:block; margin-bottom:4px; font-size:12px; color:var(--muted);">Override Headers (JSON)</label>
+          <textarea id="ov-headers" rows="4" style="width:100%; margin-bottom:12px;" placeholder='{"X-Debug": "true"}'></textarea>
+          <label style="display:block; margin-bottom:4px; font-size:12px; color:var(--muted);">Override Body</label>
+          <textarea id="ov-body" rows="4" style="width:100%; margin-bottom:16px;" placeholder="Leave blank to use original"></textarea>
+          <button class="btn btn-primary" onclick="sendReplay()" id="replay-btn">Run Replay</button>
+        </div>
+      </div>
+
+      <!-- Right: Result -->
+      <div>
+        <div class="card" id="result-card">
+          <div class="card-title">Replay Result</div>
+          <div id="result-content" style="color:var(--muted);">Run a replay to see the result here.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/js/app.js"></script>
+<script>
+  guardAuth();
+  document.getElementById('sidebar-root').innerHTML = buildSidebar('logs');
+
+  const logId = window.location.pathname.split('/').pop();
+  document.getElementById('detail-back').href = `/log/${logId}`;
+
+  async function loadOriginal() {
+    try {
+      const log = await apiFetch(`/v1/logs/${logId}`);
+      document.getElementById('orig-info').innerHTML = `
+        <div class="mb-8">${methodPill(log.method)} <span class="mono" style="margin-left:8px;">${log.url}</span></div>
+        <div class="mb-8">${statusBadge(log.status_code)} ${latencyBadge(log.latency_ms)}</div>
+        <div class="card-title" style="margin-top:12px;">Request Headers</div>
+        <pre style="max-height:160px;">${fmtJSON(log.request_headers)}</pre>
+        <div class="card-title" style="margin-top:12px;">Request Body</div>
+        <pre style="max-height:120px;">${log.request_body || '<span style="color:var(--muted)">empty</span>'}</pre>
+      `;
+    } catch(e) {
+      showNotice(document.getElementById('notice'), e.message);
+    }
+  }
+
+  async function sendReplay() {
+    const btn = document.getElementById('replay-btn');
+    btn.disabled = true;
+    btn.textContent = 'Running...';
+    document.getElementById('result-content').innerHTML = '<span class="spinner"></span>';
+
+    const body = {};
+    const url = document.getElementById('ov-url').value.trim();
+    const hdrs = document.getElementById('ov-headers').value.trim();
+    const bod  = document.getElementById('ov-body').value.trim();
+    if (url)  body.override_url = url;
+    if (bod)  body.override_body = bod;
+    if (hdrs) {
+      try { body.override_headers = JSON.parse(hdrs); }
+      catch { showNotice(document.getElementById('notice'), 'Invalid JSON in headers'); btn.disabled=false; btn.textContent='Run Replay'; return; }
+    }
+
+    try {
+      const r = await apiFetch(`/v1/logs/${logId}/replay`, { method:'POST', body: JSON.stringify(body) });
+      const statusClass = r.status === 'success' ? 'success' : 'error';
+      document.getElementById('result-content').innerHTML = `
+        <div class="notice notice-${statusClass} mb-16">
+          Status: <strong>${r.status.toUpperCase()}</strong>
+        </div>
+        <div class="stat-grid mb-16">
+          <div class="stat-card"><div class="stat-label">HTTP Status</div>${statusBadge(r.status_code)}</div>
+          <div class="stat-card"><div class="stat-label">Latency</div>${latencyBadge(r.latency_ms)}</div>
+        </div>
+        ${r.error ? `<div class="notice notice-error mb-16">${r.error}</div>` : ''}
+        <div class="card-title">Response Headers</div>
+        <pre>${fmtJSON(r.response_headers)}</pre>
+        <div class="card-title" style="margin-top:12px;">Response Body</div>
+        <pre>${r.response_body ? fmtJSON(r.response_body) : '<span style="color:var(--muted)">empty</span>'}</pre>
+        <div style="margin-top:12px; font-size:12px; color:var(--muted);">Replay ID: ${r.id}</div>
+      `;
+    } catch(e) {
+      showNotice(document.getElementById('notice'), e.message);
+      document.getElementById('result-content').innerHTML = '<span class="text-muted">Failed.</span>';
+    }
+
+    btn.disabled = false;
+    btn.textContent = 'Run Replay';
+  }
+
+  loadOriginal();
+</script>
+</body>
+</html>

@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Metrics — API Monitor</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<div id="sidebar-root"></div>
+
+<div class="main">
+  <div class="topbar">
+    <span class="topbar-title">Metrics</span>
+    <button class="btn btn-sm btn-secondary" onclick="loadMetrics()">Refresh</button>
+  </div>
+
+  <div class="content">
+    <div id="notice"></div>
+
+    <div class="stat-grid mb-24">
+      <div class="stat-card"><div class="stat-label">Total Requests</div><div class="stat-value blue" id="m-total">—</div></div>
+      <div class="stat-card"><div class="stat-label">Error Count</div><div class="stat-value red" id="m-errors">—</div></div>
+      <div class="stat-card"><div class="stat-label">Error Rate</div><div class="stat-value yellow" id="m-error-rate">—</div></div>
+      <div class="stat-card"><div class="stat-label">Avg Latency</div><div class="stat-value green" id="m-avg-lat">—</div></div>
+      <div class="stat-card"><div class="stat-label">P95 Latency</div><div class="stat-value yellow" id="m-p95-lat">—</div></div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px;">
+      <div class="card">
+        <div class="card-title">By Method</div>
+        <div id="by-method"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">By Status Code</div>
+        <div id="by-status"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Top 10 Paths</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Path</th><th class="text-right">Requests</th></tr></thead>
+          <tbody id="top-paths"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/js/app.js"></script>
+<script>
+  guardAuth();
+  document.getElementById('sidebar-root').innerHTML = buildSidebar('metrics');
+
+  function bar(count, max, color) {
+    const pct = max ? Math.round((count / max) * 100) : 0;
+    return `<div style="height:6px; background:var(--surface2); border-radius:3px; overflow:hidden; margin-top:5px;">
+      <div style="height:100%; width:${pct}%; background:${color}; border-radius:3px;"></div>
+    </div>`;
+  }
+
+  async function loadMetrics() {
+    try {
+      const m = await apiFetch('/v1/metrics');
+      document.getElementById('m-total').textContent     = m.total_requests.toLocaleString();
+      document.getElementById('m-errors').textContent    = m.error_count.toLocaleString();
+      document.getElementById('m-error-rate').textContent= (m.error_rate * 100).toFixed(1) + '%';
+      document.getElementById('m-avg-lat').textContent   = m.avg_latency_ms != null ? m.avg_latency_ms.toFixed(0) + ' ms' : '—';
+      document.getElementById('m-p95-lat').textContent   = m.p95_latency_ms != null ? m.p95_latency_ms.toFixed(0) + ' ms' : '—';
+
+      const methods = m.requests_by_method;
+      const mMax = Math.max(...Object.values(methods), 1);
+      document.getElementById('by-method').innerHTML = Object.entries(methods)
+        .sort((a,b) => b[1]-a[1])
+        .map(([k,v]) => `
+          <div style="margin-bottom:14px;">
+            <div class="flex-between">${methodPill(k)}<span class="mono" style="font-size:13px;">${v}</span></div>
+            ${bar(v, mMax, 'var(--accent)')}
+          </div>`).join('') || '<span class="text-muted">No data</span>';
+
+      const statuses = m.requests_by_status;
+      const sMax = Math.max(...Object.values(statuses), 1);
+      document.getElementById('by-status').innerHTML = Object.entries(statuses)
+        .sort((a,b) => b[1]-a[1])
+        .map(([k,v]) => {
+          const code = parseInt(k);
+          const color = code < 300 ? 'var(--green)' : code < 400 ? 'var(--blue)' : code < 500 ? 'var(--yellow)' : 'var(--red)';
+          return `
+            <div style="margin-bottom:14px;">
+              <div class="flex-between">${statusBadge(code)}<span class="mono" style="font-size:13px;">${v}</span></div>
+              ${bar(v, sMax, color)}
+            </div>`;
+        }).join('') || '<span class="text-muted">No data</span>';
+
+      const tbody = document.getElementById('top-paths');
+      tbody.innerHTML = m.top_paths.map(p => `
+        <tr>
+          <td class="mono">${p.path}</td>
+          <td class="mono text-right">${p.count}</td>
+        </tr>`).join('') || '<tr><td colspan="2" class="text-muted">No data</td></tr>';
+    } catch(e) {
+      showNotice(document.getElementById('notice'), e.message);
+    }
+  }
+
+  loadMetrics();
+</script>
+</body>
+</html>

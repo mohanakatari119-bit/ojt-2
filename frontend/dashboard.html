@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Logs — API Monitor</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<div id="sidebar-root"></div>
+
+<div class="main">
+  <div class="topbar">
+    <span class="topbar-title">Request Logs</span>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <button class="btn btn-sm btn-secondary" onclick="loadLogs()">Refresh</button>
+      <button class="btn btn-sm btn-secondary" onclick="logout()">Sign out</button>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="filters" id="filter-bar">
+      <input id="f-path" type="text" placeholder="Filter by path" />
+      <select id="f-method">
+        <option value="">All methods</option>
+        <option>GET</option><option>POST</option><option>PUT</option>
+        <option>PATCH</option><option>DELETE</option>
+      </select>
+      <input id="f-status" type="number" placeholder="Status code" style="width:120px;" />
+      <select id="f-error">
+        <option value="">Any</option>
+        <option value="true">Has error</option>
+        <option value="false">No error</option>
+      </select>
+      <input id="f-tag" type="text" placeholder="Tag" style="width:90px;" />
+      <button class="btn btn-primary btn-sm" onclick="applyFilter()">Apply</button>
+      <button class="btn btn-secondary btn-sm" onclick="clearFilters()">Clear</button>
+    </div>
+
+    <div id="notice"></div>
+
+    <div class="card" style="padding:0;">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Method</th>
+              <th>Path</th>
+              <th>Status</th>
+              <th>Latency</th>
+              <th>Error</th>
+              <th>Tags</th>
+              <th>Captured</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="log-table-body">
+            <tr><td colspan="8" style="text-align:center; padding:32px;">
+              <span class="spinner"></span>
+            </td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px;">
+      <button class="btn btn-secondary btn-sm" onclick="prevPage()" id="btn-prev">Prev</button>
+      <span id="page-info" class="text-muted" style="font-size:12px;"></span>
+      <button class="btn btn-secondary btn-sm" onclick="nextPage()" id="btn-next">Next</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/js/app.js"></script>
+<script>
+  guardAuth();
+  document.getElementById('sidebar-root').innerHTML = buildSidebar('logs');
+
+  const PAGE_SIZE = 50;
+  let offset = 0;
+
+  function buildQuery() {
+    const params = new URLSearchParams();
+    const path   = document.getElementById('f-path').value.trim();
+    const method = document.getElementById('f-method').value;
+    const status = document.getElementById('f-status').value;
+    const error  = document.getElementById('f-error').value;
+    const tag    = document.getElementById('f-tag').value.trim();
+    if (path)   params.set('path', path);
+    if (method) params.set('method', method);
+    if (status) params.set('status_code', status);
+    if (error)  params.set('has_error', error);
+    if (tag)    params.set('tag', tag);
+    params.set('limit', PAGE_SIZE);
+    params.set('offset', offset);
+    return params.toString();
+  }
+
+  async function loadLogs() {
+    const tbody = document.getElementById('log-table-body');
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:32px;"><span class="spinner"></span></td></tr>';
+    try {
+      const logs = await apiFetch(`/v1/logs?${buildQuery()}`);
+      if (!logs.length) {
+        tbody.innerHTML = '<tr><td colspan="8"><div class="empty"><p>No logs found</p></div></td></tr>';
+        return;
+      }
+      tbody.innerHTML = logs.map(log => `
+        <tr>
+          <td>${methodPill(log.method)}</td>
+          <td class="mono" style="max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${log.path}">${log.path}</td>
+          <td>${statusBadge(log.status_code)}</td>
+          <td>${latencyBadge(log.latency_ms)}</td>
+          <td>${log.error ? `<span class="badge badge-red" title="${log.error}">error</span>` : '<span class="text-muted">—</span>'}</td>
+          <td>${(log.tags||[]).map(t=>`<span class="badge badge-purple">${t}</span>`).join(' ')}</td>
+          <td class="text-muted" style="font-size:12px; white-space:nowrap;">${relTime(log.captured_at)}</td>
+          <td style="white-space:nowrap;">
+            <a href="/log/${log.id}" class="btn btn-sm btn-secondary">Inspect</a>
+            <a href="/replay/${log.id}" class="btn btn-sm btn-secondary" style="margin-left:4px;">Replay</a>
+          </td>
+        </tr>
+      `).join('');
+
+      document.getElementById('page-info').textContent = `${offset + 1}–${offset + logs.length}`;
+      document.getElementById('btn-prev').disabled = offset === 0;
+      document.getElementById('btn-next').disabled = logs.length < PAGE_SIZE;
+    } catch(e) {
+      showNotice(document.getElementById('notice'), e.message);
+    }
+  }
+
+  function applyFilter() { offset = 0; loadLogs(); }
+
+  function clearFilters() {
+    document.getElementById('f-path').value = '';
+    document.getElementById('f-method').value = '';
+    document.getElementById('f-status').value = '';
+    document.getElementById('f-error').value = '';
+    document.getElementById('f-tag').value = '';
+    offset = 0;
+    loadLogs();
+  }
+
+  function prevPage() { if (offset >= PAGE_SIZE) { offset -= PAGE_SIZE; loadLogs(); } }
+  function nextPage() { offset += PAGE_SIZE; loadLogs(); }
+  function logout()   { clearApiKey(); window.location.href = '/'; }
+
+  loadLogs();
+</script>
+</body>
+</html>
